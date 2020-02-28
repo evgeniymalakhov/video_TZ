@@ -1,8 +1,31 @@
 const fs = require('fs');
+const util = require('util')
 const shortid = require('shortid');
 const ThumbnailGenerator = require('video-thumbnail-generator').default;
 const SocketIOFile = require('socket.io-file');
-const { uploadPath, thumbnailPath, supportedTypes } = require('../config/config');
+const readdir = util.promisify(fs.readdir);
+const {
+    uploadPath,
+    thumbnailPath,
+    supportedTypes,
+    thumbnailUrl,
+    videoUrl
+} = require('../config/config');
+
+const scanVideoDirectory = async () => {
+    let files = await readdir(uploadPath);
+    return files.filter(item => item !== '.gitkeep');
+}
+
+const findVideoByName = async name => {
+    const files = await scanVideoDirectory();
+    return files.filter( file => file.startsWith(name))
+}
+
+const findThumbnailsByName = async name => {
+    const thumbs = await readdir(thumbnailPath);
+    return thumbs.filter( thumb => thumb.startsWith(name));
+}
 
 const uploadVideo = socket => {
     const uploader = new SocketIOFile(socket, {
@@ -21,36 +44,62 @@ const uploadVideo = socket => {
             thumbnailPath: thumbnailPath
         });
         await tg.generateOneByPercent(1);
-        io.emit('error', file);
     });
     uploader.on('error', async err => {
-        io.emit('error', err);
+        socket.emit('error', err);
     });
     uploader.on('abort', async fileInfo => {
-        io.emit('error', fileInfo);
+        socket.emit('error', fileInfo);
     });
 };
 
 const getVideoList = async socket => {
-    console.log(socket);
     socket.on('videoList', async () => {
-        fs.readdir(uploadPath, (err, files) => {
+        try {
+            let files = await scanVideoDirectory();
             let data = [];
-            files = files.filter(item => item !== '.gitkeep');
             if (files) {
                 data = files.map(item => {
                     const name = item.substring(0, item.lastIndexOf('.'));
-                    const video = `/videos/${item}`;
-                    const thumb = '/thumbnails/' + fs.readdirSync(thumbnailPath).find(thumb => thumb.indexOf(name) !== -1) || null;
+                    const video = `${videoUrl}/${item}`;
+                    const thumb = `${thumbnailUrl}/${fs.readdirSync(thumbnailPath)
+                        .find(thumb =>
+                            thumb.indexOf(name) !== -1) || null}`;
+
                     return { name, video, thumb };
                 });
             }
             socket.emit('videoListResult', data);
-        });
+        } catch (e) {
+            socket.emit('error', e)
+        }
     });
 };
 
+const removeVideo = async socket => {
+    socket.on('videoRemove', async ({ video }) => {
+        const videos = await findVideoByName(video);
+        const thumbs = await findThumbnailsByName(video);
+        for (let v of videos) {
+            fs.unlink(`${uploadPath}/${v}`, async err => {
+                if (err) {
+                    socket.emit('error', err);
+                }
+            });
+        }
+
+        for (let t of thumbs) {
+            fs.unlink(`${thumbnailPath}/${t}`, async err => {
+                if (err) {
+                    socket.emit('error', err);
+                }
+            });
+        }
+    });
+}
+
 module.exports = {
     uploadVideo,
-    getVideoList
+    getVideoList,
+    removeVideo
 };
