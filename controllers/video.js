@@ -1,66 +1,56 @@
 const fs = require('fs');
-const path = require('path');
+const shortid = require('shortid');
 const ThumbnailGenerator = require('video-thumbnail-generator').default;
-const { uploadPath, thumbnailPath } = require('../config/config');
+const SocketIOFile = require('socket.io-file');
+const { uploadPath, thumbnailPath, supportedTypes } = require('../config/config');
 
-class VideoController {
-    static async getList(req, res) {
-        fs.readdir(uploadPath, (err, files) => {
-            const data = files.map(item => {
-                const name = item.substring(0, item.lastIndexOf('.'));
-                const video = `/videos/${item}`;
-
-                return { name, video };
-            });
-            res.status(200).json(data);
+const uploadVideo = socket => {
+    const uploader = new SocketIOFile(socket, {
+        uploadDir: uploadPath,
+        accepts: supportedTypes,
+        chunkSize: 10000000, // (1.25MB)
+        transmissionDelay: 0,
+        overwrite: false,
+        rename: fileName => {
+            return `${shortid.generate()}.${fileName.split('.').pop()}`;
+        }
+    });
+    uploader.on('complete', async file => {
+        const tg = new ThumbnailGenerator({
+            sourcePath: `${uploadPath}/${file.name}`,
+            thumbnailPath: thumbnailPath
         });
-    }
+        await tg.generateOneByPercent(1);
+        io.emit('error', file);
+    });
+    uploader.on('error', async err => {
+        io.emit('error', err);
+    });
+    uploader.on('abort', async fileInfo => {
+        io.emit('error', fileInfo);
+    });
+};
 
-    static async getVideo(req, res) {
-        res.status(200).json({ message: 'Hello world from getVideo' });
-    }
-
-    static async uploadVideo({ files: { videos } }, res) {
-        const fileResult = await Promise.all(
-            videos.map(async file => {
-                const readStream = fs.createReadStream(file.buffer);
-                const writeStream = fs.createWriteStream(path.join(uploadPath, file.originalname));
-
-                await new Promise((resolve, reject) => {
-                    readStream.pipe(writeStream);
-
-                    writeStream.on('data', async data => {
-                        writeStream.write({
-                            rx: data.length / file.size
-                        });
-                    });
-
-                    writeStream.on('error', async e => {
-                        return reject(e);
-                    });
-
-                    writeStream.on('finish', async () => {
-                        console.log('debug', { message: 'uploading completed' });
-                        return resolve();
-                    });
-
-                    writeStream.on('end', async () => {
-                        writeStream.write({ end: true });
-                        const tg = new ThumbnailGenerator({
-                            sourcePath: uploadPath + file.originalname,
-                            thumbnailPath: thumbnailPath
-                        });
-                        await tg.generateOneByPercent(1);
-                    });
+const getVideoList = async socket => {
+    console.log(socket);
+    socket.on('videoList', async () => {
+        fs.readdir(uploadPath, (err, files) => {
+            let data = [];
+            files = files.filter(item => item !== '.gitkeep');
+            if (files) {
+                data = files.map(item => {
+                    const name = item.substring(0, item.lastIndexOf('.'));
+                    const video = `/videos/${item}`;
+                    const thumb = '/thumbnails/' + fs.readdirSync(thumbnailPath).find(thumb => thumb.indexOf(name) !== -1) || null;
+                    return { name, video, thumb };
                 });
+            }
+            socket.emit('videoListResult', data);
+        });
+    });
+};
 
-                return {
-                    url: `http://localhost:3000/${uploadPath}${file.originalname}`
-                };
-            })
-        );
-        res.status(200).json({ files: fileResult });
-    }
-}
-
-module.exports = { VideoController };
+module.exports = {
+    uploadVideo,
+    getVideoList
+};

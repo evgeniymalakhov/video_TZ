@@ -2,14 +2,15 @@ const http = require('http');
 const express = require('express');
 const app = express();
 const server = http.createServer(app);
+const io = require('socket.io')(server);
 const cors = require('cors');
-const indexRouter = require('./routers/index');
+const socketRouter = require('./routers');
 
 app.use(cors());
-
 app.use(express.static(`${__dirname}/assets`));
-app.use('/video', indexRouter);
 
-server.listen(process.env.PORT || 3000, () => {
-    console.log('Server runs on port: ' + server.address().port);
+server.listen(process.env.PORT || 3000, async () => {
+    await socketRouter(io);
 });
+
+module.exports = server;

@@ -1,9 +1,8 @@
-const router = require('express').Router()
-const { VideoController } = require('../controllers/video')
-const videoTypeMiddleware = require('../middlwares/fileType')
+const { uploadVideo, getVideoList} = require('../controllers/video');
 
-router.get('/', VideoController.getList)
-router.post('/', [videoTypeMiddleware], VideoController.uploadVideo)
-router.get('/:video', VideoController.getVideo)
-
-module.exports = router
+module.exports = async io => {
+    io.on('connection', async socket => {
+        await uploadVideo(socket);
+        await getVideoList(socket);
+    });
+};
